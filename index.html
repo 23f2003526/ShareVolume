@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Carrier Global Shares Outstanding</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+    background: #f4f9ff;
+    color: #333;
+    margin: 0;
+    padding: 1rem 2rem;
+  }
+  header h1 {
+    color: #0a3b6e;
+    font-weight: 700;
+    font-size: 2.25rem;
+    margin-bottom: 0.25rem;
+  }
+  section.card {
+    max-width: 480px;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 3px 15px rgb(0 0 0 / 0.1);
+    padding: 1.75rem 2rem;
+    margin-top: 1rem;
+  }
+  section.card h2 {
+    margin-top: 0;
+    font-weight: 600;
+    color: #1a4374;
+    border-bottom: 2px solid #0a3b6e;
+    padding-bottom: 0.25em;
+  }
+  dl {
+    margin-top: 0.75rem;
+  }
+  dt {
+    font-weight: 600;
+    color: #0c2757;
+  }
+  dd {
+    margin: 0 0 0.75rem 0;
+    font-size: 1.125rem;
+    color: #0a3b6e;
+  }
+  .value {
+    font-weight: 700;
+    color: #004a99;
+  }
+  .fy {
+    font-style: italic;
+    color: #2b4662;
+  }
+  footer {
+    margin-top: 3rem;
+    font-size: 0.9rem;
+    color: #667788;
+  }
+  .loading {
+    font-style: italic;
+    color: #666;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="share-entity-name">Loading...</h1>
+</header>
+<main>
+  <section class="card" aria-label="Maximum shares outstanding">
+    <h2>Maximum Shares Outstanding</h2>
+    <dl>
+      <dt>Value:</dt>
+      <dd id="share-max-value" class="value">–</dd>
+      <dt>Fiscal Year:</dt>
+      <dd id="share-max-fy" class="fy">–</dd>
+    </dl>
+  </section>
+  <section class="card" aria-label="Minimum shares outstanding">
+    <h2>Minimum Shares Outstanding</h2>
+    <dl>
+      <dt>Value:</dt>
+      <dd id="share-min-value" class="value">–</dd>
+      <dt>Fiscal Year:</dt>
+      <dd id="share-min-fy" class="fy">–</dd>
+    </dl>
+  </section>
+</main>
+<footer>
+  Data sourced from SEC EDGAR API. Uses User-Agent as per SEC guidelines.<br />
+  To fetch other companies, append <code>?CIK=000XXXXXXXXX</code> in URL.
+</footer>
+
+<script>
+const defaultCIK = "0001783180";
+const secApiBase =
+  "https://data.sec.gov/api/xbrl/companyconcept/CIK{CIK}/dei/EntityCommonStockSharesOutstanding.json";
+
+const userAgent = "CarrierGlobalSharesAssistant/1.0 (+https://example.com)";
+
+const fetchWithUA = (url) => {
+  // fetch cannot set "User-Agent" header from browsers due to CORS/security,
+  // so rely on the SEC endpoint (https://data.sec.gov/) allowing access without it or
+  // fallback proxies for CIK changes.
+  return fetch(url);
+};
+
+function formatNumber(n) {
+  return n.toLocaleString("en-US");
+}
+
+function updatePage(data) {
+  document.title = `${data.entityName} Shares Outstanding`;
+  const entityNameElem = document.getElementById("share-entity-name");
+  entityNameElem.textContent = data.entityName;
+
+  document.getElementById("share-max-value").textContent = formatNumber(data.max.val);
+  document.getElementById("share-max-fy").textContent = data.max.fy;
+
+  document.getElementById("share-min-value").textContent = formatNumber(data.min.val);
+  document.getElementById("share-min-fy").textContent = data.min.fy;
+}
+
+function processData(json) {
+  // json: the raw JSON from the SEC endpoint
+  const entityName = json.entityName || "Unknown";
+  const sharesArray = (json.units && json.units.shares) || [];
+
+  // filter fy > "2020" & val numeric
+  const filtered = sharesArray.filter(
+    (rec) => rec.fy && rec.fy > "2020" && typeof rec.val === "number"
+  );
+
+  if (filtered.length === 0) {
+    return {
+      entityName,
+      max: { val: 0, fy: "" },
+      min: { val: 0, fy: "" },
+    };
+  }
+
+  // find max/min val
+  let maxRec = filtered[0],
+    minRec = filtered[0];
+  for (let rec of filtered) {
+    if (rec.val > maxRec.val) maxRec = rec;
+    if (rec.val < minRec.val) minRec = rec;
+  }
+
+  return {
+    entityName,
+    max: { val: maxRec.val, fy: maxRec.fy },
+    min: { val: minRec.val, fy: minRec.fy },
+  };
+}
+
+function saveDataJSON(obj) {
+  // trigger a download of data.json (for user convenience)
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "data.json";
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+  }, 1000);
+}
+
+async function fetchAndRender(cik) {
+  const cik10 = cik.padStart(10, "0");
+  const url = secApiBase.replace("{CIK}", cik10);
+
+  try {
+    // For dynamic requests to other CIKs, use AIPipe proxy: https://aipipe.org/transform/fetch?url=ENCODED_URL
+    // This avoids CORS and user-agent issues.
+    let fetchUrl = url;
+    if (cik10 !== defaultCIK) {
+      const encodedTarget = encodeURIComponent(url);
+      fetchUrl = `https://aipipe.org/transform/fetch?url=${encodedTarget}`;
+    }
+    const resp = await fetch(fetchUrl);
+    if (!resp.ok)
+      throw new Error(`Network response not ok (${resp.status}) for CIK=${cik10}`);
+
+    const json = await resp.json();
+    const processed = processData(json);
+    updatePage(processed);
+
+    if (cik10 === defaultCIK) {
+      // Save data.json file only for the default company on initial load.
+      saveDataJSON(processed);
+    }
+  } catch (e) {
+    console.error(e);
+    alert("Error fetching data. See console for details.");
+    // Fallback display:
+    document.getElementById("share-entity-name").textContent = "Error loading data";
+    document.getElementById("share-max-value").textContent = "–";
+    document.getElementById("share-max-fy").textContent = "–";
+    document.getElementById("share-min-value").textContent = "–";
+    document.getElementById("share-min-fy").textContent = "–";
+  }
+}
+
+// Parse CIK from URL ?CIK=000XXXXX
+function parseQueryCIK() {
+  const params = new URLSearchParams(window.location.search);
+  const cikparam = params.get("CIK");
+  if (cikparam && /^\d{1,10}$/.test(cikparam)) {
+    return cikparam.padStart(10, "0");
+  }
+  return null;
+}
+
+// On load fetch and show the default or requested CIK:
+window.addEventListener("DOMContentLoaded", () => {
+  const queryCIK = parseQueryCIK();
+  fetchAndRender(queryCIK || defaultCIK);
+});
+</script>
+</body>
+</html>
